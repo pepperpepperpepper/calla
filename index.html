@@ -1,0 +1,675 @@
+<!DOCTYPE html> 
+<html> 
+<head> 
+<title>3D gallery - canvas</title> 
+<style type="text/css"> 
+	html { 
+		overflow: hidden; 
+	} 
+	body { 
+		position: absolute; 
+		margin: 0px; 
+		padding: 0px; 
+		background: #000; 
+		width: 100%; 
+		height: 100%; 
+	} 
+	#screen { 
+		position: absolute; 
+		width: 100%; 
+		height: 100%; 
+		background: #333; 
+		overflow: hidden; 
+		font-family: Segoe UI, Verdana, Arial, Sans-Serif; 
+		color: #fff; 
+		font-size: 13px; 
+	} 
+	#screen canvas { 
+		position: absolute; 
+		left: 0px; 
+		top: 0px; 
+		width: 100%; 
+		height: 100%; 
+		background: #333; 
+	} 
+	#command { 
+		position:absolute; 
+		left: 50%; 
+		margin-left: -250px; 
+		bottom: 15px; 
+		height: 35px; 
+		width: 500px; 
+		z-index: 1000; 
+	} 
+	#screen .background { 
+		position: absolute; 
+		width: 100%; 
+		height: 100%; 
+		background: #000; 
+		opacity: 0.3; 
+	} 
+	#screen .content { 
+		position: absolute; 
+		padding: 3px; 
+		width: 100%; 
+		height: 100%; 
+	} 
+	#options { 
+		position:relative; 
+		top: 3px; 
+		width: 100%; 
+	} 
+	#infopanel { 
+    position: absolute; 
+    text-align: center; 
+    top: 50px; 
+    left: 30px; 
+    width: 80px; 
+    height: 150px; 
+    color: #fff; 
+    font-size: 9pt; 
+	} 
+	#fps { 
+		font-size: 3em; 
+		font-weight: bold; 
+	} 
+	#npoly { 
+		font-size: 2em; 
+		font-weight: bold; 
+		margin-top: 10px; 
+	} 
+</style> 
+ 
+<script type="text/javascript"> 
+// ================================================================================= 
+//       ===== 3D gallery HTML 5 CANVAS experiment II ===== 
+// script written by Gerard Ferrandez -  
+// Last Update: Sunday Sept 5, 16:40 
+// ================================================================================= 
+ 
+var m3D = function () { 
+	// ---- private vars ---- 
+	var 
+		ctx, 
+		points, 
+		faces, 
+		nPoints, 
+		nFaces, 
+		scene, 
+		wireframe, 
+		vRotationEnabled = true, 
+		targetImage, 
+		imageOver, 
+		imageOverBak, 
+		background, 
+		screen = {}, 
+		mouse = { 
+			mov: -5 
+		}, 
+		fps = 0, 
+		npoly = 0; 
+	// ---- camera ---- 
+	var camera = { 
+		x: 0, 
+		z: 0, 
+		angleTargetX: 0, 
+		angleTargetZ: 0, 
+		angleH: 0, 
+		angleV: 0, 
+		focalLength: 500 
+	}; 
+	/* ==== main loop ==== */ 
+	var run = function () { 
+		// ---- camera movements ---- 
+		camera.movements(); 
+		// ---- gradient background ---- 
+		if (vRotationEnabled || !background) { 
+			var horizon = 0.5 + camera.angleV * 1.2; 
+			if (horizon < 0) horizon = 0; else if (horizon > 1) horizon = 1; 
+			background = ctx.createLinearGradient(0, 0, 0, screen.h); 
+			background.addColorStop(0, scene.ceilingColor); 
+			background.addColorStop(horizon, scene.horizonColor); 
+			background.addColorStop(horizon, scene.horizonColor); 
+			background.addColorStop(1, scene.groundColor); 
+		} 
+		// ---- fill background ---- 
+		ctx.fillStyle = background; 
+		ctx.fillRect(0, 0, screen.w, screen.h); 
+		// ---- points 3D to 2D projection ---- 
+		var i = nPoints; 
+		while( i-- ) points[i].projection(); 
+		// ---- compute faces ---- 
+		imageOver = false; 
+		i = nFaces; 
+		while( i-- ) faces[i].compute(); 
+		// ---- z sorting ---- 
+		faces.sort(function (p0, p1) { 
+			return p1.zIndex - p0.zIndex; 
+		}); 
+		// ---- draw faces in z order ---- 
+		for (var i = 0, p; p = faces[i++];) p.visible && p.draw(); 
+		// ---- mouse over cursor ---- 
+		if (!imageOverBak) { 
+			if (imageOver) screen.div.style.cursor = "pointer"; 
+		} else if (!imageOver) { 
+			screen.div.style.cursor = "default"; 
+		} 
+		imageOverBak = imageOver; 
+		// ---- loop ---- 
+		fps++; 
+		setTimeout(run, 16); 
+	}; 
+ 
+	/* ==== Camera translations and rotations ==== */ 
+	camera.movements = function () { 
+		// ---- translation ---- 
+		this.x += (this.targetX - this.x) * .05; 
+		this.z += (this.targetZ - this.z) * .05; 
+		this.normalLength = Math.sqrt(this.x * this.x + this.z * this.z); 
+		// ---- Y axis Rotation ---- 
+		var angleH = ( 
+			(mouse.mov > 0 ? ((mouse.x - mouse.xd) / screen.md) : 0) + 
+			Math.atan2(this.angleTargetX - this.x, this.angleTargetZ - this.z) 
+		) % (2 * Math.PI); 
+		// ---- normalize quadran ---- 
+		if (Math.abs(angleH - this.angleH) > Math.PI) { 
+			if (angleH < this.angleH)  this.angleH -= 2 * Math.PI; 
+			else this.angleH += 2 * Math.PI; 
+		} 
+		// ---- easing and trigo ---- 
+		this.angleH += (angleH - this.angleH) * 0.1; 
+		this.cosh = Math.cos(this.angleH); 
+		this.sinh = Math.sin(this.angleH); 
+		// ---- X axis Rotation ---- 
+		if (vRotationEnabled) { 
+			this.angleV += (((screen.mh - mouse.y) * 0.002) - this.angleV) * 0.1; 
+			this.cosv = Math.cos(this.angleV); 
+			this.sinv = Math.sin(this.angleV); 
+		} 
+	}; 
+ 
+	///////////////////////////////////////////////////////////////////////////////////// 
+	/* ==== points constructor ==== */ 
+	var Point = function (x, y, z, tx, ty) { 
+		this.x  = x; 
+		this.y  = y; 
+		this.z  = z; 
+		this.tx = tx; 
+		this.ty = ty; 
+		this.projection(); 
+	}; 
+ 
+	/* ==== bisection constructor ==== */ 
+	var Bisection = function (p0, p1) { 
+		this.x  = (p1.x  + p0.x)  * 0.5; 
+		this.y  = (p1.y  + p0.y)  * 0.5; 
+		this.z  = (p1.z  + p0.z)  * 0.5; 
+		this.tx = (p1.tx + p0.tx) * 0.5; 
+		this.ty = (p1.ty + p0.ty) * 0.5; 
+		this.projection(); 
+	}; 
+ 
+	/* ==== 3D to 2D projection ==== */ 
+	Point.prototype.projection = Bisection.prototype.projection = function () { 
+		// ---- 3D coordinates ---- 
+		var nx = this.x - camera.x; 
+		var nz = this.z - camera.z; 
+		// ---- horizontal rotation ---- 
+		var  tx = camera.cosh * nx - camera.sinh * nz; 
+		this.zp = camera.sinh * nx + camera.cosh * nz; 
+		if (vRotationEnabled) { 
+			// ---- vertical rotation enabled ---- 
+			var ty  = camera.cosv * this.y - camera.sinv * this.zp; 
+			this.zp = camera.sinv * this.y + camera.cosv * this.zp; 
+		} else { 
+			// ---- vertical rotation disabled ---- 
+			ty = this.y; 
+		} 
+		// ---- 2D projection ---- 
+		this.scale = camera.focalLength / Math.max(1, this.zp); 
+		this.xp = screen.mw + tx * this.scale; 
+		this.yp = screen.mh - ty * this.scale; 
+	}; 
+ 
+	/* ==== add new point ==== */ 
+	var addPoint = function(x, y, z, tx, ty) { 
+		var i = 0, p; 
+		while (p = points[i++]) { 
+			// return point 
+			if (x == p.x && y == p.y && z == p.z) return p; 
+		} 
+		// create new point 
+		nPoints++; 
+		points.push(p = new Point(x, y, z, tx, ty)); 
+		return p; 
+	}; 
+ 
+	///////////////////////////////////////////////////////////////////////////////////// 
+	/* ==== 3D image constructor ==== */ 
+	var ProjectedImage = function (face, p) { 
+		for (var i in p) this[i] = p[i]; 
+		this.face = face; 
+		// ---- target position when selected ---- 
+		this.targetX = this.x + Math.cos(this.angle / 180 * Math.PI) * this.distView; 
+		this.targetZ = this.z + Math.sin(this.angle / 180 * Math.PI) * this.distView; 
+		// ---- create canvas image ---- 
+		this.srcImg = new Image(); 
+		this.srcImg.src = scene.imagesPath + p.src; 
+		// ---- center point ---- 
+		this.pc = new Point(this.x, this.y, this.z); 
+	}; 
+ 
+	/* ==== target image ==== */ 
+	ProjectedImage.prototype.select = function () { 
+		targetImage         = imageOver; 
+		camera.targetX      = targetImage.targetX; 
+		camera.targetZ      = targetImage.targetZ; 
+		camera.angleTargetX = targetImage.x; 
+		camera.angleTargetZ = targetImage.z; 
+		mouse.mov = -5; 
+		mouse.xd  = mouse.x; 
+	}; 
+ 
+	/* ==== loading image ==== */ 
+	ProjectedImage.prototype.loading = function () { 
+		if (this.srcImg.complete) { 
+			this.face.image = this; 
+			this.face.preImage = false; 
+			// ---- get image size ---- 
+			var zoom = this.zoom || 1; 
+			var tw = this.srcImg.width  * zoom * 0.5; 
+			var th = this.srcImg.height * zoom * 0.5; 
+			// ---- create points ---- 
+			var dx = Math.sin(this.angle / 180 * Math.PI); 
+			var dz = Math.cos(this.angle / 180 * Math.PI); 
+			this.p0 = addPoint(this.x + (tw * dx), this.y + th, this.z - (tw * dz), 0, 0); 
+			this.p1 = addPoint(this.x - (tw * dx), this.y + th, this.z + (tw * dz), this.srcImg.width, 0); 
+			this.p2 = addPoint(this.x - (tw * dx), this.y - th, this.z + (tw * dz), this.srcImg.width, this.srcImg.height); 
+			this.p3 = addPoint(this.x + (tw * dx), this.y - th, this.z - (tw * dz), 0, this.srcImg.height); 
+		} 
+	}; 
+ 
+/* ==== draw projected image ==== */ 
+	ProjectedImage.prototype.draw = function () { 
+		var image = this.srcImg, k = 0; 
+		/* ==== recursive triangulation ===== */ 
+		var triangulate = function (p0, p1, p2, level) { 
+			if (--level === 0) { 
+				var ox = offsetX[k]; 
+				var oy = offsetY[k++]; 
+				// ---- clipping ---- 
+				ctx.save(); 
+				ctx.beginPath(); 
+				ctx.moveTo(Math.round(p0.xp + ox), Math.round(p0.yp + oy)); 
+				ctx.lineTo(Math.round(p1.xp + ox), Math.round(p1.yp + oy)); 
+				ctx.lineTo(Math.round(p2.xp + ox), Math.round(p2.yp + oy)); 
+				ctx.clip(); 
+				// ---- transform ---- 
+				var d = p0.tx * (p2.ty - p1.ty) - p1.tx * p2.ty + p2.tx * p1.ty + (p1.tx - p2.tx) * p0.ty; 
+				ctx.transform( 
+					-(p0.ty * (p2.xp - p1.xp) -  p1.ty * p2.xp  + p2.ty *  p1.xp + (p1.ty - p2.ty) * p0.xp) / d, // m11 
+					 (p1.ty *  p2.yp + p0.ty  * (p1.yp - p2.yp) - p2.ty *  p1.yp + (p2.ty - p1.ty) * p0.yp) / d, // m12 
+					 (p0.tx * (p2.xp - p1.xp) -  p1.tx * p2.xp  + p2.tx *  p1.xp + (p1.tx - p2.tx) * p0.xp) / d, // m21 
+					-(p1.tx *  p2.yp + p0.tx  * (p1.yp - p2.yp) - p2.tx *  p1.yp + (p2.tx - p1.tx) * p0.yp) / d, // m22 
+					 (p0.tx * (p2.ty * p1.xp  -  p1.ty * p2.xp) + p0.ty * (p1.tx *  p2.xp - p2.tx  * p1.xp) + (p2.tx * p1.ty - p1.tx * p2.ty) * p0.xp) / d, // dx 
+					 (p0.tx * (p2.ty * p1.yp  -  p1.ty * p2.yp) + p0.ty * (p1.tx *  p2.yp - p2.tx  * p1.yp) + (p2.tx * p1.ty - p1.tx * p2.ty) * p0.yp) / d  // dy 
+				); 
+				if (wireframe) { 
+					// ---- wireframe mode ---- 
+					ctx.closePath(); 
+					ctx.strokeStyle = "#fff"; 
+					ctx.stroke(); 
+				} else { 
+					ctx.drawImage(image, 0, 0); 
+				} 
+				ctx.restore(); 
+				npoly++; 
+			} else { 
+				// ---- subdivision ---- 
+				var p3 = new Bisection(p0, p1); 
+				var p4 = new Bisection(p1, p2); 
+				var p5 = new Bisection(p2, p0); 
+				// ---- recursive call ---- 
+				triangulate(p0, p3, p5, level); 
+				triangulate(p3, p1, p4, level); 
+				triangulate(p5, p4, p2, level); 
+				triangulate(p5, p3, p4, level); 
+			} 
+		}; 
+		// ---- distance from camera ---- 
+		var dx = this.pc.x - camera.x; 
+		var dz = this.pc.z - camera.z; 
+		var dist = Math.sqrt(dx * dx + dz * dz); 
+		// ---- adapt tessellation quality ---- 
+		if (dist > 1000) { 
+			// ---- 8 triangles ---- 
+			var level = 2; 
+			var offsetX = [1,-1,-1,0,2,0,2,1]; 
+			var offsetY = [2,2,0,1,1,-1,-1,0]; 
+		} else { 
+			// ---- 32 triangles ---- 
+			var level = 3; 
+			var offsetX = [3,1,1,2,-1,-3,-3,-2,-1,-3,-3,-2,0,0,-2,-1,4,2,4,3,0,-2,0,-1,4,2,4,3,3,1,1,2]; 
+			var offsetY = [4,4,2,3,4,4,2,3,0,0,-2,-1,1,3,1,2,3,1,1,2,-1,-3,-3,-2,-1,-3,-3,-2,0,0,-2,-1]; 
+		} 
+		// ---- start triangulation ---- 
+		triangulate(this.p0, this.p1, this.p2, level); 
+		triangulate(this.p0, this.p2, this.p3, level); 
+		// ---- on mouse over ---- 
+		(mouse.y > Math.min(this.p0.yp, this.p1.yp)) && (mouse.y < Math.max(this.p2.yp, this.p3.yp)) && 
+		(mouse.x > Math.min(this.p0.xp, this.p3.xp)) && (mouse.x < Math.max(this.p1.xp, this.p2.xp)) && (imageOver = this); 
+	}; 
+ 
+///////////////////////////////////////////////////////////////////////////////////// 
+	/* ==== surface constructor ==== */ 
+	var Surface = function (p) { 
+		// ---- properties ---- 
+		for (var i in p) this[i] = p[i]; 
+		if (!this.shadingLight) this.shadingLight = scene.shadingLight; 
+		this.alpha = this.fillColor.alpha || 1; 
+		this.nP = p.x.length; 
+		if (this.nP < 3 || this.nP > 4) alert("ERROR: triangles or rectangles only"); 
+		// ---- tri/quad points ---- 
+		this.p0 = addPoint(p.x[0], p.y[0], p.z[0]); 
+		this.p1 = addPoint(p.x[1], p.y[1], p.z[1]); 
+		this.p2 = addPoint(p.x[2], p.y[2], p.z[2]); 
+		if (this.nP == 4) this.p3 = addPoint(p.x[3], p.y[3], p.z[3]); 
+		// ---- normal vector for flat shading ---- 
+		this.normalX = ((this.p1.y - this.p0.y) * (this.p2.z - this.p0.z)) - ((this.p1.z - this.p0.z) * (this.p2.y - this.p0.y)); 
+		this.normalY = ((this.p1.z - this.p0.z) * (this.p2.x - this.p0.x)) - ((this.p1.x - this.p0.x) * (this.p2.z - this.p0.z)); 
+		this.normalZ = ((this.p1.x - this.p0.x) * (this.p2.y - this.p0.y)) - ((this.p1.y - this.p0.y) * (this.p2.x - this.p0.x)); 
+    this.normalLength = Math.sqrt(this.normalX * this.normalX + this.normalY * this.normalY + this.normalZ * this.normalZ); 
+		// ---- create attached image ---- 
+		if (this.image) { 
+			this.preImage = new ProjectedImage(this, this.image); 
+			this.image = false; 
+		} 
+		// ---- create custom function ---- 
+		this.createFunction(); 
+		nFaces++; 
+	}; 
+ 
+	/* ==== draw shapes ==== */ 
+	Surface.prototype.draw = function () { 
+		npoly++; 
+		// ---- shape ---- 
+		ctx.beginPath(); 
+		ctx.moveTo(this.p0.xp - 0.5, this.p0.yp); 
+		ctx.lineTo(this.p1.xp + 0.5, this.p1.yp); 
+		ctx.lineTo(this.p2.xp + 0.5, this.p2.yp); 
+		if (this.p3) ctx.lineTo(this.p3.xp - 0.5, this.p3.yp); 
+		if (wireframe) { 
+			// ---- wireframe mode ---- 
+			ctx.closePath(); 
+			ctx.strokeStyle = "#fff"; 
+			ctx.stroke(); 
+		} else { 
+			// ---- fill shape ---- 
+			ctx.fillStyle = "rgba(" + 
+				Math.round(this.fillColor.r * this.light) + "," + 
+				Math.round(this.fillColor.g * this.light) + "," + 
+				Math.round(this.fillColor.b * this.light) + "," + this.alpha + ")"; 
+			ctx.fill(); 
+		} 
+		// ---- draw image ---- 
+		this.image && this.image.draw(); 
+		// ---- href (door) on mouse over ---- 
+		(this.href) && (mouse.y > Math.min(this.p0.yp, this.p1.yp)) && (mouse.y < Math.max(this.p2.yp, this.p3.yp)) && 
+		(mouse.x > Math.min(this.p0.xp, this.p3.xp)) && (mouse.x < Math.max(this.p1.xp, this.p2.xp)) && (imageOver = this); 
+	}; 
+ 
+	/* ==== z buffering, flat shading ==== */ 
+	Surface.prototype.compute = function () { 
+		// ---- average z-index ---- 
+		this.zIndex = (this.p0.zp + this.p1.zp + this.p2.zp + (this.p3 ? this.p3.zp : 0)) / this.nP; 
+		if (this.zIndex > -200) { 
+			// ---- back face culling ---- 
+			if (this.alwaysVisible || ((this.p1.yp - this.p0.yp) / (this.p1.xp - this.p0.xp) < (this.p2.yp - this.p0.yp) / (this.p2.xp - this.p0.xp) ^ this.p0.xp < this.p1.xp == this.p0.xp > this.p2.xp)) { 
+				// ---- visible face ---- 
+				this.visible = true; 
+				this.zIndex += this.zIndexOffset || 0; 
+				// ---- load image ---- 
+				this.preImage && this.preImage.loading(); 
+				// ---- run custom function ---- 
+				this.run && this.run(); 
+				// ---- flat shading ---- 
+				this.light = this.noShading ? 1 : scene.ambientLight + Math.abs(this.normalZ * camera.cosh - this.normalX * camera.sinh) * this.shadingLight / (camera.normalLength * this.normalLength); 
+			} else this.visible = false; 
+		} else this.visible = false; 
+	}; 
+ 
+	/* ==== sprite constructor ==== */ 
+	var Sprite = function (p) { 
+		for (var i in p) this[i] = p[i]; 
+		this.pc = addPoint(p.x, p.y, p.z); 
+		// ---- create canvas image ---- 
+		this.srcImg = new Image(); 
+		this.srcImg.src = scene.imagesPath + p.src; 
+		this.createFunction(); 
+		nFaces++; 
+	}; 
+ 
+	/* ==== draw sprite ==== */ 
+	Sprite.prototype.draw = function () { 
+		npoly++; 
+		this.run && this.run(); 
+		var w = this.w * this.pc.scale; 
+		var h = this.h * this.pc.scale; 
+		ctx.drawImage(this.srcImg, this.pc.xp - w * 0.5, this.pc.yp - h * 0.5, w, h); 
+	}; 
+ 
+	/* ==== z buffering, loading sprite ==== */ 
+	Sprite.prototype.compute = function () { 
+		if (this.isLoaded) { 
+			// ---- z-index ---- 
+			if (this.pc.zp > -200) { 
+				this.zIndex  = (this.zIndexOffset || 0) + this.pc.zp; 
+				this.visible = true; 
+			} else this.visible = false; 
+		} else { 
+			if (this.srcImg.complete) { 
+				// ---- load image ---- 
+				this.isLoaded = true; 
+				this.w = this.srcImg.width  * this.zoom; 
+				this.h = this.srcImg.height * this.zoom; 
+			} 
+		} 
+	}; 
+ 
+	/* ==== create custom objects function ==== */ 
+	Sprite.prototype.createFunction = Surface.prototype.createFunction = function () { 
+		if (this.code) { 
+			if (this.code.init) { 
+				// ---- compile and execute init() function ---- 
+				this.init = new Function(this.code.init); 
+				this.init(); 
+			} 
+			// ---- compile run() function ---- 
+			if (this.code.run) this.run  = new Function(this.code.run); 
+		} 
+	}; 
+ 
+	//////////////////////////////////////////////////////////////////////////// 
+ 
+	/* ===== copy JS object ==== */ 
+	var cloneObject = function (obj) { 
+		if (typeof(obj) != "object" || obj == null) return obj; 
+		var newObj = obj.constructor(); 
+		for (var i in obj) newObj[i] = cloneObject(obj[i]); 
+		return newObj; 
+	}; 
+ 
+	/* ==== loading geometry file ==== */ 
+	// assuming native XHR and JSON.parse support 
+	var loadGeometry = function (url) { 
+		var ajax = new XMLHttpRequest; 
+		ajax.open("GET", url+"?nocache="+Math.random(), false); 
+		ajax.send(""); 
+		return JSON.parse(ajax.responseText); 
+	}; 
+ 
+	/* ==== screen dimensions ==== */ 
+	var resize = function () { 
+		screen.w  = screen.div.offsetWidth; 
+		screen.h  = screen.div.offsetHeight; 
+		screen.md = screen.w / Math.PI * 0.5; 
+		screen.mw = screen.w / 2; 
+		screen.mh = screen.h / 2; 
+		mouse.y   = screen.mh; 
+		// ---- canvas size and position ---- 
+		screen.canvas.width  = screen.w; 
+		screen.canvas.height = screen.h; 
+		var o = screen.div; 
+		for (screen.x = 0, screen.y = 0; o != null; o = o.offsetParent) { 
+			screen.x += o.offsetLeft; 
+			screen.y += o.offsetTop; 
+		} 
+	}; 
+ 
+	/* ==== init geometry ==== */ 
+	var initGeometry = function (file) { 
+		var data   = loadGeometry(file); 
+		nPoints = 0; 
+		nFaces  = 0; 
+		points  = []; 
+		faces   = []; 
+		scene   = data.params; 
+		// ---- create surfaces ---- 
+		var i = 0, p; 
+		while (p = data.geometry[i++]) { 
+			// ---- push object geometry ---- 
+			if (p.type == "poly") faces.push(new Surface(p)); 
+			else if (p.type == "sprite") faces.push(new Sprite(p)); 
+			else if (p.type == "object") { 
+				// ---- object reference ---- 
+				var o = data.objects[p.ref]; 
+				for (var j = 0; j < o.length; j++) { 
+					var c = cloneObject(o[j]); 
+					for (var k in p) if (!c[k]) c[k] = p[k]; 
+					for (var k = 0; k < c.x.length; k++) { 
+						c.x[k] += p.x; 
+						c.y[k] += p.y; 
+						c.z[k] += p.z; 
+					} 
+					// ---- push object geometry ---- 
+					faces.push(new Surface(c)); 
+				} 
+			} 
+		} 
+	}; 
+ 
+	/* ==== init script ==== */ 
+	var init = function (file) { 
+		screen.div    = document.getElementById("screen"); 
+		screen.canvas = document.getElementById("canvas"); 
+		ctx = screen.canvas.getContext("2d"); 
+		// ---- init geometry ---- 
+		initGeometry(file); 
+		// ---- events ---- 
+		resize(); 
+		onresize = resize; 
+		screen.div.onmousemove = function (e) { 
+			if (window.event) e = window.event; 
+			mouse.x = e.clientX - screen.x; 
+			mouse.y = e.clientY - screen.y; 
+			mouse.mov++; 
+		}; 
+		screen.div.onclick = function () { 
+			if (imageOver) { 
+				// ---- hyperlink ---- 
+				if (imageOver.href) { 
+					var href = imageOver.href; 
+					camera.targetX  = imageOver.exitX; 
+					camera.targetZ  = imageOver.exitZ; 
+					setTimeout(function() { 
+						initGeometry(href); 
+						resize(); 
+						camera.angleTargetX = 0; 
+						camera.angleTargetZ = 10000; 
+						camera.targetX = scene.targetX || 0; 
+						camera.targetZ = scene.targetZ || 0; 
+						camera.angleH = camera.angleH - Math.PI; 
+						mouse.mov = -3; 
+						mouse.xd  = mouse.x; 
+					}, 500); 
+				// ---- target image ---- 
+				} else imageOver.select(); 
+			} 
+		} 
+		// ---- starting position ---- 
+		mouse.x        = screen.w / 2; 
+		mouse.xd       = mouse.x; 
+		camera.x       = scene.startX || 0; 
+		camera.z       = scene.startZ || 0; 
+		camera.targetX = scene.targetX || 0; 
+		camera.targetZ = scene.targetZ || 0; 
+		// ---- fps count ---- 
+		setInterval(function () { 
+			document.getElementById('fps').innerHTML = fps * 2; 
+			document.getElementById('npoly').innerHTML = npoly * 2; 
+			fps = 0; 
+			npoly = 0; 
+		}, 500); // update every 0.5 seconds 
+		// ---- options ---- 
+		document.getElementById("cbWireframe").onclick = function(){ 
+			wireframe = this.checked; 
+		} 
+		document.getElementById('cbVAR').onclick = function(){ 
+			vRotationEnabled = this.checked; 
+			background = false; 
+			camera.angleV = 0; 
+		} 
+		document.getElementById('sbFocal').onchange = function(){ 
+			camera.focalLength = this.value * 1; 
+		} 
+		// ---- start engine ---- 
+		run(); 
+	}; 
+ 
+	//////////////////////////////////////////////////////////////////////////// 
+ 
+	return { 
+		// ---- public functions ---- 
+		init: init 
+	} 
+}(); 
+</script> 
+</head> 
+ 
+<body> 
+<div id="screen"> 
+	<canvas id="canvas">Sorry, this demo requires a web browser which supports HTML5 canvas!</canvas> 
+	<div id="command"> 
+		<div class="background"></div> 
+		<div class="content"> 
+			<div id="options"> 
+				Wireframe: <input type="checkbox" id="cbWireframe">  
+				Vertical axis rotation: <input type="checkbox" checked id="cbVAR">  
+				Focal Length: 
+				<select id="sbFocal"> 
+					<option value="300">wide</option> 
+					<option selected value="500">normal</option> 
+				</select> 
+			</div> 
+		</div> 
+	</div> 
+	<div id="infopanel"> 
+		<div class="background"></div> 
+		<div class="content"> 
+			<div id="fps">00</div> 
+			<div>FPS</div> 
+			<div id="npoly">00</div> 
+			<div>Polygons second</div> 
+		</div> 
+	</div> 
+</div> 
+ 
+<script type="text/javascript"> 
+/* ==== start script ==== */ 
+setTimeout(function() { 
+	m3D.init("room-geometry-0.js"); 
+}, 500); 
+</script>
+ 
+</body> 
+</html> 
